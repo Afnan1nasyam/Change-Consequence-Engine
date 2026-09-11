@@ -1,0 +1,63 @@
+# Local development infrastructure.
+#
+# Postgres carries both relational data and embeddings via pgvector; a separate vector
+# store is not justified at MVP scale and would fragment provenance.
+#
+# NOTE: this file has not been executed in the environment where it was written (no Docker
+# daemon available). It is syntactically validated only. See docs/STATUS.md.
+
+name: cce
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: cce
+      POSTGRES_PASSWORD: cce
+      POSTGRES_DB: cce
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cce -d cce"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # Object storage for raw artifacts. Kept in the `storage` profile so the default
+  # `docker compose up` stays light:  docker compose --profile storage up -d
+  minio:
+    image: minio/minio:latest
+    profiles: ["storage"]
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: cce
+      MINIO_ROOT_PASSWORD: cce-local-dev
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

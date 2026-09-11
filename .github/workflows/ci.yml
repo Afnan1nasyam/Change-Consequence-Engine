@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # CI runs with NO provider credentials. The suite must be green without them, which is
+  # what keeps the fake provider honest and stops a network dependency creeping in.
+  CCE_ENVIRONMENT: ci
+  CCE_LOG_FORMAT: json
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 is the floor declared in pyproject; 3.13 guards against drift.
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Lint
+        run: python -m ruff check --output-format=github .
+
+      - name: Format check
+        run: python -m ruff format --check .
+
+      - name: Type check
+        run: python -m mypy app tests
+
+      - name: Specification consistency
+        # Also asserted by tests/contract/test_spec_consistency.py; run standalone so a
+        # documentation drift names itself in the log.
+        run: python -m scripts.check_spec_consistency
+
+      - name: Test
+        run: python -m pytest -q
+
+      - name: Assert the suite needs no credentials
+        # Any provider reached over the network would fail here, which is the point.
+        run: |
+          test -z "${CCE_GROQ_API_KEY:-}"
+          python -m pytest tests/contract -q
+
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: cce
+          POSTGRES_PASSWORD: cce
+          POSTGRES_DB: cce
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cce -d cce"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      CCE_DATABASE_URL: postgresql+psycopg://cce:cce@localhost:5432/cce
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install with the Postgres driver
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,postgres]"
+
+      - name: Enable extensions
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect("postgresql://cce:cce@localhost:5432/cce", autocommit=True) as conn:
+              for ext in ("vector", "uuid-ossp", "pg_trgm"):
+                  conn.execute(f'CREATE EXTENSION IF NOT EXISTS "{ext}"')
+          print("extensions ready")
+          PY
+
+      - name: Alembic configuration is valid
+        run: python -m alembic heads
+
+      - name: Migrations apply to an empty database
+        run: python -m alembic upgrade head
+
+      - name: No model drift against the migrations
+        # Passes trivially while no ORM models exist; catches divergence once they do.
+        run: python -m alembic check

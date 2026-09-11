@@ -1,0 +1,89 @@
+# Agent runtime binding.
+#
+# This file owns *runtime* concerns only: tier, optional provider/model override, token
+# budget. Agent behaviour (role, responsibilities, reasoning constraints, evidence
+# requirements, output requirements) lives in `.claude/agents/*.md` and is not duplicated
+# here. See docs/FOLDER_STRUCTURE.md, "Separation of prompt from runtime binding".
+#
+# Model identifiers are never written here. `tier` resolves to a model through
+# CCE_MODEL_REASONING / CCE_MODEL_STANDARD / CCE_MODEL_FAST in the environment.
+#
+# An override may name a provider and a model env var explicitly, which is how the
+# provider-diversity experiments in docs/EVALUATION.md (F1-F5) are run without code
+# changes:
+#
+#   blind-spot-hunter:
+#     provider: gemini
+#     model_env: CCE_MODEL_BLINDSPOT
+#
+# Anything not listed here falls back to `defaults`.
+
+version: 1
+
+defaults:
+  tier: standard
+  max_output_tokens: 2048
+  temperature: 0.0
+
+agents:
+  # Stage A - interpretation. Structural parsing, not reasoning.
+  change-decomposer:
+    tier: fast
+    max_output_tokens: 3072
+
+  # Stage C - specialist analysis. Each runs over its own evidence slice.
+  policy-analyst:
+    tier: standard
+  process-analyst:
+    tier: standard
+  technology-analyst:
+    tier: standard
+  people-analyst:
+    tier: standard
+  data-analyst:
+    tier: standard
+  risk-analyst:
+    tier: standard
+  historical-analyst:
+    tier: standard
+
+  # Stage D - Class B hypothesis generation. Genuinely hard reasoning.
+  consequence-hunter:
+    tier: reasoning
+    max_output_tokens: 4096
+
+  # Stage E/F - contradiction materiality and blind-spot partition.
+  # Deterministic collisions arrive already found, so this is rating, not search.
+  contradiction-hunter:
+    tier: standard
+  blind-spot-hunter:
+    tier: reasoning
+    max_output_tokens: 4096
+    # Deliberately non-zero: this stage explores a partition rather than
+    # extracting a fact. Still low enough to stay auditable.
+    temperature: 0.4
+
+  # Falsification. Weak models agree; this stage must not.
+  adversarial-challenger:
+    tier: reasoning
+    max_output_tokens: 3072
+
+  # Stage G - arbitration.
+  evidence-arbiter:
+    tier: standard
+  consequence-judge:
+    tier: reasoning
+    max_output_tokens: 4096
+
+  # Stage I - composition only. Introduces no new claims.
+  report-composer:
+    tier: standard
+    max_output_tokens: 6144
+
+# Non-agent internal roles that also consume the gateway.
+# Assumption extraction runs across the entire corpus at ingestion: `fast` is mandatory,
+# not an optimisation (see CLAUDE.md, cost discipline).
+internal:
+  assumption-extractor:
+    tier: fast
+    max_output_tokens: 2048

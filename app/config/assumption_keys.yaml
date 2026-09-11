@@ -1,0 +1,114 @@
+# The closed AssumptionKeyRegistry.
+#
+# Only keys listed here may enter the deterministic coupling pipeline. An extracted key
+# that is absent becomes a KeyRegistryGap and is never indexed: there is no fallback path
+# (docs/DOMAIN_CHECKPOINT.md 4.1).
+#
+# The vocabulary is deliberately small - one or two keys per benchmark domain, seeded to
+# cover data/sample_corpus. Growing it is a reviewed, versioned change, and gap volume per
+# domain is the signal that says where to grow it. An enormous speculative ontology would
+# make Class A look broad while most entries had never been validated against a document.
+#
+# `canonical_form` is the constraint shape an extractor must emit. It is how polarity is
+# handled without inference: "refunds above 10,000 require approval" and "refunds below
+# 10,000 need no approval" are the same fact, and the entry decides which way it is written
+# (checkpoint 3.7).
+#
+# `unit` is mandatory for scalar and duration, and is matched exactly at admission. There
+# is no unit conversion at ingestion; a mismatch blocks the binding (checkpoint 5.6).
+#
+# Bump `registry_version` on every change. Stored records pin the version they were
+# admitted under, so a past analysis stays explainable and two runs differing only in
+# registry version are diffable.
+
+registry_version: registry-1
+
+keys:
+  # -- payments / refunds ---------------------------------------------------
+  - key: refund.approval_threshold
+    value_type: scalar
+    unit: USD
+    canonical_form: "refund amount >= X USD requires manager approval"
+    allowed_scopes: [region, tier]
+    description: Refund amount at or above which manager approval is required.
+    domain: payments
+    introduced_in_version: registry-1
+
+  # -- data retention -------------------------------------------------------
+  - key: retention.window
+    value_type: duration
+    unit: d
+    canonical_form: "personal data is retained for X days, then deleted"
+    allowed_scopes: [region, data_class]
+    description: Number of days personal data is retained before deletion.
+    domain: data_retention
+    introduced_in_version: registry-1
+
+  # -- access management ----------------------------------------------------
+  - key: auth.reset_token.ttl
+    value_type: duration
+    unit: h
+    canonical_form: "a password reset token remains valid for X hours"
+    allowed_scopes: [region]
+    description: Lifetime of a password-reset token from issue to expiry.
+    domain: access_management
+    introduced_in_version: registry-1
+
+  - key: access.review_interval
+    value_type: duration
+    unit: d
+    canonical_form: "privileged access is recertified every X days"
+    allowed_scopes: [region, tier]
+    description: Interval at which privileged access must be recertified.
+    domain: access_management
+    introduced_in_version: registry-1
+
+  # -- account lifecycle ----------------------------------------------------
+  - key: account.dormancy_period
+    value_type: duration
+    unit: d
+    canonical_form: "an account with no activity for X days is marked dormant"
+    allowed_scopes: [region]
+    description: Inactivity period after which an account becomes dormant.
+    domain: account_lifecycle
+    introduced_in_version: registry-1
+
+  # -- SLA / process --------------------------------------------------------
+  - key: sla.p1_response_time
+    value_type: duration
+    unit: min
+    canonical_form: "a P1 incident is acknowledged within X minutes"
+    allowed_scopes: [tier]
+    description: Acknowledgement target for a P1 incident.
+    domain: sla_process
+    introduced_in_version: registry-1
+
+  # -- support operations ---------------------------------------------------
+  - key: support.first_response_target
+    value_type: duration
+    unit: min
+    canonical_form: "a customer contact receives a first response within X minutes"
+    allowed_scopes: [tier]
+    description: First-response target for an inbound customer contact.
+    domain: support_operations
+    introduced_in_version: registry-1
+
+  # -- API contracts --------------------------------------------------------
+  - key: api.max_page_size
+    value_type: scalar
+    unit: items
+    canonical_form: "a list endpoint returns at most X items per page"
+    allowed_scopes: []
+    description: Maximum page size a public list endpoint will return.
+    domain: api_contracts
+    introduced_in_version: registry-1
+
+  # -- reporting ------------------------------------------------------------
+  - key: reporting.revenue_close_lag
+    value_type: duration
+    unit: d
+    canonical_form: "revenue reporting closes X days after period end"
+    allowed_scopes: []
+    description: Days after period end at which revenue reporting is closed.
+    domain: reporting
+    introduced_in_version: registry-1
