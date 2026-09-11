@@ -1,0 +1,128 @@
+# Source registration for the sample corpus.
+#
+# This file is *registration metadata*, not a gold label. It is what an operator asserts
+# about a document when connecting it: which tenant owns it, what kind of artifact it is,
+# and what authority it carries. Every one of those is deliberately here rather than in the
+# document, because a document that could declare its own authority could plant itself above
+# a real policy (docs/SECURITY.md).
+#
+# Note what the manifest does NOT contain: which assumptions each file binds, which are
+# stale, or which contradict each other. Those are expectations, and they live in
+# data/benchmarks/ so they cannot leak into the production ingestion path.
+
+tenant_id: tn_00000000000000000000000000000001
+
+sources:
+  - path: policy/refund-approval-policy.md
+    title: Refund Approval Policy
+    source_type: policy
+    authority_class: policy
+    owner: payments-governance
+    version_label: v3
+    effective_from: 2025-01-01
+
+  - path: policy/data-retention-policy.md
+    title: Data Retention Policy
+    source_type: policy
+    authority_class: policy
+    owner: privacy-office
+    version_label: v2
+    effective_from: 2024-07-01
+
+  - path: policy/eu-data-protection-policy.md
+    title: EU Data Protection Policy
+    source_type: policy
+    # Regional law: outranks the global policy, so an EU override from here is legitimate.
+    authority_class: regulatory
+    owner: eu-dpo
+    version_label: v1
+    effective_from: 2025-03-01
+
+  - path: standard/payments-operations-standard.md
+    title: Payments Operations Standard
+    source_type: policy
+    authority_class: standard
+    owner: payments-engineering
+    version_label: v6
+    effective_from: 2024-11-01
+
+  - path: sop/password-reset-runbook.md
+    title: Password Reset Support Runbook
+    source_type: runbook
+    authority_class: sop_runbook
+    owner: support-operations
+    version_label: v4
+    effective_from: 2025-02-01
+
+  - path: config/identity-provider.json
+    title: Identity Provider Configuration
+    source_type: config
+    authority_class: config
+    owner: security-operations
+    version_label: prod-2025-06
+    effective_from: 2025-06-01
+
+  - path: training/refund-handling-deck.md
+    title: Refund Handling Onboarding Deck
+    source_type: training
+    authority_class: training
+    owner: support-enablement
+    version_label: rev7
+    effective_from: 2025-01-15
+
+  - path: wiki/emea-support-notes.md
+    title: EMEA Support Team Notes
+    source_type: knowledge_doc
+    # A team wiki. Lower authority than a policy, which is what makes its EU retention
+    # figure an unauthorized narrowing rather than a legitimate override.
+    authority_class: wiki
+    owner: emea-support
+    version_label: current
+    effective_from: 2025-04-01
+
+  - path: wiki/vendor-integration-notes.md
+    title: Vendor Integration Notes
+    source_type: knowledge_doc
+    # Contains prompt-injection text that demands `regulatory`. It gets `wiki`, because
+    # authority is assigned here and a document's claims about itself are worth nothing.
+    authority_class: wiki
+    owner: unassigned
+    version_label: draft
+    effective_from: 2025-08-01
+
+  - path: wiki/office-move-faq.md
+    title: Dublin Office Move FAQ
+    source_type: knowledge_doc
+    authority_class: wiki
+    owner: facilities
+    version_label: current
+    effective_from: 2025-05-01
+
+  - path: ticket/INC-4471-refund-backlog.md
+    title: INC-4471 Refund approval backlog
+    source_type: incident
+    authority_class: ticket
+    owner: support-operations
+    version_label: closed
+    effective_from: 2024-06-03
+
+  - path: dashboard/retention-analytics-definition.md
+    title: Customer Lifetime Value Metric Definition
+    source_type: dashboard
+    # An analytics definition that *consumes* the retention window. It reads 365 days
+    # where the policy declares 90, which makes it the standing stale consumer.
+    authority_class: config
+    owner: analytics-platform
+    version_label: v4
+    effective_from: 2025-02-15
+
+  - path: sop/incident-response-runbook.md
+    title: Major Incident Response Runbook
+    source_type: runbook
+    # Same authority class as the password-reset runbook, declaring a different P1
+    # acknowledgement target at the same scope. Two peers, neither able to outrank the
+    # other: resolve_authority must answer Ambiguous rather than pick the newer one.
+    authority_class: sop_runbook
+    owner: reliability-engineering
+    version_label: v2
+    effective_from: 2025-09-01

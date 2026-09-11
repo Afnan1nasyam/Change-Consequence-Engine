@@ -1,0 +1,628 @@
+# Labelled retrieval queries over data/sample_corpus.
+#
+# GOLD LABELS. They live here, beside the coupling expectations and away from
+# data/sample_corpus/manifest.yaml, because a label reachable from the ingestion path is a
+# label the system can accidentally read. Nothing on the retrieval path can even import the
+# harness that loads this file: tests/contract/test_layering.py restricts app/domain,
+# app/ingestion, app/assumptions, app/retrieval and app/application to importing each other,
+# and the loader lives in app/evaluation.
+#
+# Scored against the LEXICAL retriever only, by app/evaluation/retrieval_benchmark.py.
+# There is no stemming, no synonym table, no query expansion, no vector search and no
+# reranking in the system under test, and the suite deliberately does not pretend otherwise:
+# the `known_lexical_miss` and `assumption_key_lookup` categories exist to price their
+# absence, so that adding one of them later has a before-figure to be judged against.
+#
+# ---------------------------------------------------------------------------
+# What an expectation means
+# ---------------------------------------------------------------------------
+#
+# `expect` is a RELEVANCE JUDGMENT ABOUT THE QUESTION. It is not a prediction of what the
+# retriever will do, and not a statement about who may read the evidence. That is what lets
+# one expectation resolve to a hit under a scope that may read it and to a correct
+# withholding under one that may not, with no change to the label.
+#
+# An expectation names a source path and a quote, never an `evidence_id`. The runner
+# resolves the pair to the id of the admitted span containing the quote. Three reasons:
+# a 32-hex id is opaque, so a reviewer cannot tell whether the label is right; a stale id
+# would be indistinguishable from a span that was never admitted, which is the single most
+# important distinction this benchmark draws; and the same discipline already governs the
+# extraction fixtures in data/fixtures/extraction_proposals.json.
+#
+# A quote must occur exactly once in its document, must be verbatim, and is matched against
+# the CANONICAL text - so for config/identity-provider.json it is matched against the
+# flattened `key: value` form the JSON parser produces, not against the raw JSON.
+#
+# An empty `expect` is a negative control: the correct answer is approximately nothing.
+#
+# ---------------------------------------------------------------------------
+# Authorization
+# ---------------------------------------------------------------------------
+#
+# The sample corpus ships with no permission labels (docs/STATUS.md 30), so authorization
+# recall could not be measured against it at all. The suite therefore declares the ACL it
+# wants and the runner applies it through the store port, which is what an operator
+# applying an ACL does. manifest.yaml stays untouched: registration metadata is operator
+# input, and rewriting it would change what every other suite ingests.
+
+version: retrieval-benchmark-1
+
+# Pinned, and compared against the retriever that actually runs. A recall figure belongs to
+# one scorer and one filter set; if either moves and these numbers are reprinted unchanged,
+# the report is quietly wrong.
+retrieval_config_version: retrieval-1
+# tokens-2 added the stopword list; tokens-3 adds the plural-s rule. The pin caught both
+# changes, which is what it is for: the figures in docs/EVALUATION.md were re-measured
+# under each scorer rather than reprinted.
+scorer_version: lexical-bm25-1:tokens-3:k1=1.2/b=0.75
+
+# The vector strategy, scored against these same labels and never merged with the lexical
+# run. Pinned separately: the two scorers are unrelated, and a crossed comparison would let
+# one strategy's figures be reprinted under the other's heading.
+#
+# The embedder named here is the offline hashing one, which carries NO semantic knowledge -
+# it is feature hashing over a bag of words. Every vector figure in docs/EVALUATION.md is
+# therefore a measurement of the vector machinery and of a term-overlap signal, not of
+# semantic retrieval. Replacing it with recorded vectors from a real provider changes this
+# pin, which is what forces the figures to be re-measured rather than reprinted.
+vector_scorer_version: vector-cosine-1:hashing-1:d=256
+
+# The fused scorer. It embeds both input fingerprints, so retuning BM25, changing the
+# tokenizer or swapping the embedder invalidates this pin and forces a re-measurement -
+# which is the point: a fused figure is only reproducible if its two inputs are.
+hybrid_scorer_version: hybrid-rrf-1:k=60:[lexical-bm25-1:tokens-3:k1=1.2/b=0.75]+[vector-cosine-1:hashing-1:d=256]
+
+tenants:
+  primary: tn_00000000000000000000000000000001
+  # Holds nothing. Present so tenant isolation is probed from inside the benchmark rather
+  # than asserted only in a unit test.
+  foreign: tn_99999999999999999999999999999999
+
+scopes:
+  # Holds the label below, so it reads the whole corpus. The unrestricted baseline.
+  privacy_reader: [privacy-office]
+  # The least-privileged scope: reads unlabelled documents and nothing else. Not an
+  # administrator, and there is deliberately no wildcard grant.
+  least_privilege: []
+
+document_labels:
+  # The retention policy is the most-referenced document in the corpus, which is what makes
+  # it the useful one to restrict: several questions have it as their correct answer, so
+  # withholding it is visible in the numbers instead of being a rounding error.
+  - source: policy/data-retention-policy.md
+    labels: [privacy-office]
+
+queries:
+  # -------------------------------------------------------------------------
+  # Exact terminology - the query uses the corpus's own words
+  # -------------------------------------------------------------------------
+  - id: exact_manager_approval_before_release
+    category: exact_terminology
+    text: manager approval before release
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: policy/refund-approval-policy.md
+        quote: Refunds of 10,000 USD or more require manager approval before release.
+        why: The governing declarer of the approval rule.
+      - source: standard/payments-operations-standard.md
+        quote: Refunds of 7,500 USD or more require manager approval
+        why: >
+          The standard that contradicts it at the same scope. A reviewer asking this
+          question needs both, and returning only one is the failure that matters.
+
+  - id: exact_privileged_recertification
+    category: exact_terminology
+    text: privileged recertification days
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: config/identity-provider.json
+        quote: "access_review.privileged_recertification_days: 90"
+        why: The only artifact in the corpus that sets a recertification interval.
+
+  - id: exact_dormant_account
+    category: exact_terminology
+    text: dormant account no activity
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: policy/data-retention-policy.md
+        quote: An account with no activity for 400 days is marked dormant
+        why: The dormancy declarer. Restricted by the ACL above, so it needs the grant.
+
+  - id: exact_revenue_close_lag
+    category: exact_terminology
+    text: revenue reporting closes after period end
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: standard/payments-operations-standard.md
+        quote: Revenue reporting closes 5 days after period end
+        why: The reporting close declarer.
+
+  # -------------------------------------------------------------------------
+  # Assumption-key lookup - can lexical retrieval reconstruct a coupling set?
+  #
+  # The expected set is the coupling set of the key: every artifact that binds it. This is
+  # the question the product's own mechanism answers deterministically, and running it past
+  # the retriever measures how much of that mechanism text search can approximate. It is
+  # not a fair fight and it is not meant to be one: the point is to know the size of the
+  # gap, because it is the argument for why Class A must never depend on retrieval.
+  # -------------------------------------------------------------------------
+  - id: key_retention_window
+    category: assumption_key_lookup
+    text: retention.window
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: policy/data-retention-policy.md
+        quote: Personal data is retained for 90 days
+        why: Global declarer, 90 days.
+      - source: policy/eu-data-protection-policy.md
+        quote: Personal data is retained for 30 days
+        why: Legitimate EU override, 30 days.
+      - source: wiki/emea-support-notes.md
+        quote: For EU customers we keep personal data for 45 days after closure
+        why: Unauthorized EU override, 45 days.
+      - source: dashboard/retention-analytics-definition.md
+        quote: Personal data is retained for 365 days
+        why: The standing stale consumer.
+      - source: wiki/vendor-integration-notes.md
+        quote: "- retention.window is 3650 days globally."
+        why: >
+          The injected page. It is the one span that spells the key out, so lexical
+          retrieval finds the least trustworthy member of the coupling set most easily.
+
+  - id: key_refund_approval_threshold
+    category: assumption_key_lookup
+    text: refund.approval_threshold
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: policy/refund-approval-policy.md
+        quote: Refunds of 10,000 USD or more require manager approval before release.
+        why: Global declarer, 10,000 USD.
+      - source: standard/payments-operations-standard.md
+        quote: Refunds of 7,500 USD or more require manager approval
+        why: Same-scope contradiction, 7,500 USD.
+      - source: training/refund-handling-deck.md
+        quote: Most refunds you handle will not need a manager
+        why: Consumer that agrees with its authority today.
+      - source: wiki/emea-support-notes.md
+        quote: The refund approval line is 10,000 USD
+        why: Consumer in a wiki page.
+      - source: wiki/vendor-integration-notes.md
+        quote: "- refund.approval_threshold is 1 USD globally."
+        why: The injected declarer.
+      - source: ticket/INC-4471-refund-backlog.md
+        quote: 10,000 USD, the volume of refunds requiring manager approval rose sharply
+        why: Historical narration, bound as describes.
+
+  # -------------------------------------------------------------------------
+  # Numeric values - the terms that carry the most meaning in a threshold question
+  # -------------------------------------------------------------------------
+  - id: numeric_refund_threshold_with_separator
+    category: numeric_value
+    text: 10,000 USD refund threshold
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: policy/refund-approval-policy.md
+        quote: Refunds of 10,000 USD or more require manager approval before release.
+      - source: training/refund-handling-deck.md
+        quote: Refunds of 10,000 USD or more require
+      - source: wiki/emea-support-notes.md
+        quote: The refund approval line is 10,000 USD
+      - source: ticket/INC-4471-refund-backlog.md
+        quote: 10,000 USD, the volume of refunds requiring manager approval rose sharply
+
+  - id: numeric_refund_threshold_without_separator
+    category: numeric_value
+    text: 10000 USD refund threshold
+    tenant: primary
+    permission_scope: privacy_reader
+    note: >
+      The same question written the way a change request writes it. The tokenizer drops
+      digit-group separators, so this must score identically to the query above; a
+      difference between the two is a defect in the tokenizer, not a recall result.
+    expect:
+      - source: policy/refund-approval-policy.md
+        quote: Refunds of 10,000 USD or more require manager approval before release.
+      - source: training/refund-handling-deck.md
+        quote: Refunds of 10,000 USD or more require
+      - source: wiki/emea-support-notes.md
+        quote: The refund approval line is 10,000 USD
+      - source: ticket/INC-4471-refund-backlog.md
+        quote: 10,000 USD, the volume of refunds requiring manager approval rose sharply
+
+  - id: numeric_retention_ninety_days
+    category: numeric_value
+    text: 90 days retention after the account is closed
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: policy/data-retention-policy.md
+        quote: Personal data is retained for 90 days
+
+  - id: numeric_p1_fifteen_minutes
+    category: numeric_value
+    text: acknowledged within 15 minutes
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: sop/password-reset-runbook.md
+        quote: A P1 incident is acknowledged within 15 minutes
+
+  # -------------------------------------------------------------------------
+  # Cross-medium - a JSON config and a prose runbook, joined by nothing but a key
+  # -------------------------------------------------------------------------
+  - id: cross_medium_reset_token_ttl
+    category: cross_medium
+    text: reset token 24 hours
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: config/identity-provider.json
+        quote: "auth.reset_token.ttl_hours: 24"
+        why: The enforcing declarer, in a config file.
+      - source: sop/password-reset-runbook.md
+        quote: Tell the customer the link is valid for 24 hours
+        why: >
+          The prose consumer. Neither document references the other, so this pair is the
+          corpus's cross-medium coupling case and the one worth watching.
+
+  # -------------------------------------------------------------------------
+  # Scoped concepts - the scope filter is intersection, not equality
+  # -------------------------------------------------------------------------
+  - id: scoped_eu_retention
+    category: scoped_concept
+    text: personal data retained after closure
+    tenant: primary
+    permission_scope: privacy_reader
+    scope: region:EU
+    expect:
+      - source: policy/eu-data-protection-policy.md
+        quote: Personal data is retained for 30 days
+      - source: wiki/emea-support-notes.md
+        quote: For EU customers we keep personal data for 45 days after closure
+      - source: policy/data-retention-policy.md
+        quote: Personal data is retained for 90 days
+        why: >
+          Bound at global, which intersects region:EU. A global policy governs EU customers
+          too, and a scoped question that hid it would be answering a different question.
+
+  - id: scoped_us_retention
+    category: scoped_concept
+    text: personal data retained after closure
+    tenant: primary
+    permission_scope: privacy_reader
+    scope: region:US
+    note: >
+      The EU-bound spans must not come back: sibling scopes are disjoint. They are
+      deliberately not labelled here - they are irrelevant to a US question, and labelling
+      irrelevant evidence to demonstrate an exclusion would corrupt the relevance
+      judgments. The exclusion is visible in the query's own trace instead.
+    expect:
+      - source: policy/data-retention-policy.md
+        quote: Personal data is retained for 90 days
+
+  # -------------------------------------------------------------------------
+  # Stale vs current - the same question asked at two dates
+  # -------------------------------------------------------------------------
+  - id: as_of_p1_target_2025_05
+    category: version_currency
+    text: P1 incident acknowledged within minutes
+    tenant: primary
+    permission_scope: privacy_reader
+    as_of: 2025-05-01
+    note: >
+      The incident-response runbook is effective 2025-09-01, so at this date the
+      password-reset runbook's 15 minutes is the only in-force target.
+    expect:
+      - source: sop/password-reset-runbook.md
+        quote: A P1 incident is acknowledged within 15 minutes
+
+  - id: as_of_p1_target_2026_01
+    category: version_currency
+    text: P1 incident acknowledged within minutes
+    tenant: primary
+    permission_scope: privacy_reader
+    as_of: 2026-01-01
+    note: >
+      The same question after the second runbook comes into force. Both peers govern, they
+      disagree, and retrieval must surface both - resolving the disagreement is
+      resolve_authority's job and it answers Ambiguous.
+    expect:
+      - source: sop/password-reset-runbook.md
+        quote: A P1 incident is acknowledged within 15 minutes
+      - source: sop/incident-response-runbook.md
+        quote: A P1 incident is acknowledged within 30 minutes
+
+  - id: as_of_eu_retention_2025_01
+    category: version_currency
+    text: EU customers personal data retention
+    tenant: primary
+    permission_scope: privacy_reader
+    as_of: 2025-01-01
+    note: >
+      Before the EU policy (2025-03-01) and the EMEA wiki page (2025-04-01) exist. Only the
+      global policy governs.
+    expect:
+      - source: policy/data-retention-policy.md
+        quote: Personal data is retained for 90 days
+
+  - id: as_of_eu_retention_2026_01
+    category: version_currency
+    text: EU customers personal data retention
+    tenant: primary
+    permission_scope: privacy_reader
+    as_of: 2026-01-01
+    expect:
+      - source: policy/data-retention-policy.md
+        quote: Personal data is retained for 90 days
+      - source: policy/eu-data-protection-policy.md
+        quote: Personal data is retained for 30 days
+      - source: wiki/emea-support-notes.md
+        quote: For EU customers we keep personal data for 45 days after closure
+
+  # -------------------------------------------------------------------------
+  # Paraphrase - the question a person actually types
+  # -------------------------------------------------------------------------
+  - id: paraphrase_how_long_we_keep_customer_data
+    category: paraphrase
+    text: how long do we keep customer data once an account is closed
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: policy/data-retention-policy.md
+        quote: Personal data is retained for 90 days
+      - source: policy/eu-data-protection-policy.md
+        quote: Personal data is retained for 30 days
+      - source: wiki/emea-support-notes.md
+        quote: For EU customers we keep personal data for 45 days after closure
+
+  - id: paraphrase_who_signs_off_large_refunds
+    category: paraphrase
+    text: who has to sign off on a large refund
+    tenant: primary
+    permission_scope: privacy_reader
+    note: >
+      Nothing in the corpus writes "sign off" or "large". The evidence is unambiguously
+      relevant and shares no content term with the question, which is the case a lexical
+      retriever cannot answer at any tuning - and therefore the clearest argument for the
+      vector strategy, measured rather than asserted.
+    expect:
+      - source: policy/refund-approval-policy.md
+        quote: Refunds of 10,000 USD or more require manager approval before release.
+      - source: standard/payments-operations-standard.md
+        quote: Refunds of 7,500 USD or more require manager approval
+
+  - id: paraphrase_password_reset_link_validity
+    category: paraphrase
+    text: how long is the password reset link good for
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: sop/password-reset-runbook.md
+        quote: Tell the customer the link is valid for 24 hours
+      - source: config/identity-provider.json
+        quote: "auth.reset_token.ttl_hours: 24"
+
+  # -------------------------------------------------------------------------
+  # Known lexical misses - the defects docs/STATUS.md 26 records, priced
+  # -------------------------------------------------------------------------
+  - id: lexical_miss_refund_singular
+    category: known_lexical_miss
+    text: refund threshold policy
+    tenant: primary
+    permission_scope: privacy_reader
+    note: >
+      Every authoritative span writes "Refunds"; the query writes "refund". There is no
+      stemming, so the singular does not reach the plural, and the spans that do match on
+      "refund" are the wiki page and the injected vendor notes. This is the recorded defect
+      turned into a number.
+    expect:
+      - source: policy/refund-approval-policy.md
+        quote: Refunds of 10,000 USD or more require manager approval before release.
+      - source: standard/payments-operations-standard.md
+        quote: Refunds of 7,500 USD or more require manager approval
+      - source: training/refund-handling-deck.md
+        quote: Refunds of 10,000 USD or more require
+
+  - id: lexical_miss_token_expiry_wording
+    category: known_lexical_miss
+    text: token expiry
+    tenant: primary
+    permission_scope: privacy_reader
+    note: >
+      The config names the token; the runbook that consumes it says "the link is valid for
+      24 hours" and never writes "token" or "expiry". One half of a cross-medium pair is
+      reachable by this wording and the other is not.
+    expect:
+      - source: config/identity-provider.json
+        quote: "auth.reset_token.ttl_hours: 24"
+      - source: sop/password-reset-runbook.md
+        quote: Tell the customer the link is valid for 24 hours
+
+  # -------------------------------------------------------------------------
+  # Coverage gaps - relevant text the corpus holds and retrieval cannot reach
+  #
+  # Only spans that produced an admitted binding are retrievable (docs/STATUS.md 25).
+  # These four labels are correct relevance judgments over text that is parsed, chunked and
+  # stored, and that no retrieval strategy can return, because no EvidenceItem covers it.
+  # They are the reason `coverage` is reported next to recall.
+  # -------------------------------------------------------------------------
+  - id: coverage_refund_billing_defect_exception
+    category: coverage_gap
+    text: refund from a confirmed billing defect released without manager approval
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: policy/refund-approval-policy.md
+        quote: A refund arising from a confirmed billing defect may be released without manager approval
+        why: >
+          A material exception to the rule the whole corpus is organized around, and the
+          one thing an approval question most needs. It binds no registered key, so it is
+          unreachable - the most consequential single instance of the admission boundary.
+
+  - id: coverage_delegation_window
+    category: coverage_gap
+    text: delegate approval authority to a named deputy
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: policy/refund-approval-policy.md
+        quote: delegate approval authority to a named deputy
+        why: A 14-day delegation window nobody can retrieve.
+
+  - id: coverage_unregistered_escalation_ceiling
+    category: coverage_gap
+    text: escalation ceiling above 50,000 USD Head of Support
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: wiki/emea-support-notes.md
+        quote: Anything above 50,000 USD goes to the Head of Support
+        why: >
+          refund.escalation_ceiling is not in the closed registry, so the proposal was
+          quarantined and no span was admitted. Registry coverage is a retrieval ceiling,
+          which is not obvious until it is measured.
+
+  - id: coverage_session_idle_timeout
+    category: coverage_gap
+    text: session idle timeout minutes
+    tenant: primary
+    permission_scope: privacy_reader
+    expect:
+      - source: config/identity-provider.json
+        quote: "auth.session.idle_timeout_minutes: 30"
+        why: >
+          Stored in the canonical text, bound to no registered key. The same file's
+          reset-token TTL is retrievable, so the gap is per binding and not per document.
+
+  # -------------------------------------------------------------------------
+  # Permission-restricted evidence - the same label under two scopes
+  # -------------------------------------------------------------------------
+  - id: restricted_retention_least_privilege
+    category: permission_restricted
+    text: personal data retained for 90 days then deleted
+    tenant: primary
+    permission_scope: least_privilege
+    note: >
+      The requester holds no grant, so the retention policy is closed to them. The expected
+      evidence is still the correct answer to the question - it is withheld, not absent -
+      and it must appear nowhere in the outcome.
+    expect:
+      - source: policy/data-retention-policy.md
+        quote: Personal data is retained for 90 days
+
+  - id: restricted_retention_privacy_reader
+    category: permission_restricted
+    text: personal data retained for 90 days then deleted
+    tenant: primary
+    permission_scope: privacy_reader
+    note: The twin of the query above, differing only in the grant held.
+    expect:
+      - source: policy/data-retention-policy.md
+        quote: Personal data is retained for 90 days
+
+  - id: restricted_dormancy_least_privilege
+    category: permission_restricted
+    text: dormant account after 400 days of no activity
+    tenant: primary
+    permission_scope: least_privilege
+    expect:
+      - source: policy/data-retention-policy.md
+        quote: An account with no activity for 400 days is marked dormant
+
+  - id: restricted_refund_threshold_least_privilege
+    category: permission_restricted
+    text: manager approval before release
+    tenant: primary
+    permission_scope: least_privilege
+    note: >
+      The authorization-filtered recall case, and the reason it exists. The two queries
+      above ask a restricted requester a question whose only answer is closed to them, so
+      they measure withholding and have no recall to report. This one asks a restricted
+      requester a question they are fully entitled to have answered: the expected evidence
+      is in unlabelled documents, and both must still come back at the same ranks as under
+      `exact_manager_approval_before_release`, which is the identical query with the grant
+      held. Corpus statistics are recomputed over the authorized slice, so the two runs
+      score differently by construction - if that changes the *ranking* of evidence the
+      requester may read, authorization is costing recall and this pair is where it shows.
+    expect:
+      - source: policy/refund-approval-policy.md
+        quote: Refunds of 10,000 USD or more require manager approval before release.
+      - source: standard/payments-operations-standard.md
+        quote: Refunds of 7,500 USD or more require manager approval
+
+  # -------------------------------------------------------------------------
+  # Negative controls - the correct answer is nothing
+  # -------------------------------------------------------------------------
+  - id: negative_office_parking
+    category: negative_control
+    text: parking spaces bike racks basement
+    tenant: primary
+    permission_scope: privacy_reader
+    note: The office-move FAQ binds nothing, and no admitted span shares a term.
+    expect: []
+
+  - id: negative_coffee_machine
+    category: negative_control
+    text: the coffee machine is coming with us
+    tenant: primary
+    permission_scope: privacy_reader
+    note: >
+      Deliberately phrased with common function words. There is no stopword list, so this
+      measures whether "the" and "is" are enough to produce a result for a question the
+      corpus does not answer.
+    expect: []
+
+  - id: negative_pack_personal_items
+    category: negative_control
+    text: pack your personal items into the crate
+    tenant: primary
+    permission_scope: privacy_reader
+    note: >
+      Shares exactly one content word - "personal" - with three retention spans about
+      personal data. A single ambiguous term bridging unrelated topics is the commonest
+      source of lexical noise, and this is it.
+    expect: []
+
+  # -------------------------------------------------------------------------
+  # Tenant isolation - a partition, not a filter
+  # -------------------------------------------------------------------------
+  - id: foreign_tenant_refund_threshold
+    category: tenant_isolation
+    text: 10,000 USD refund manager approval
+    tenant: foreign
+    permission_scope: privacy_reader
+    note: >
+      A query that matches six spans in the primary tenant, asked by a tenant that holds
+      none. Nothing may return, and holding a grant does not cross a tenant boundary.
+      Measured, the trace reports `considered: 0` rather than 21 spans charged to the
+      tenant bucket: the store enumeration is per tenant, so a foreign tenant's index is
+      empty before the retriever runs at all. The bucket exists for a candidate list that
+      spans tenants, which the production join never builds - isolation is upstream of the
+      retriever's own accounting, which is the stronger place for it to be.
+    expect: []
+
+  # -------------------------------------------------------------------------
+  # Source-type filter - selects, and must not re-weight
+  # -------------------------------------------------------------------------
+  - id: source_type_policy_only_retention
+    category: source_type_filter
+    text: personal data retained after the account is closed
+    tenant: primary
+    permission_scope: privacy_reader
+    source_types: [policy]
+    note: >
+      The dashboard's 365-day consumer and the EMEA wiki page are excluded by type, not by
+      score. Corpus statistics are computed before the content filters, so the surviving
+      spans must keep the scores they had unfiltered.
+    expect:
+      - source: policy/data-retention-policy.md
+        quote: Personal data is retained for 90 days
+      - source: policy/eu-data-protection-policy.md
+        quote: Personal data is retained for 30 days

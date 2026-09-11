@@ -1,0 +1,174 @@
+# Expected deterministic output of the coupling resolver over data/sample_corpus.
+#
+# GOLD LABELS. They live here, and nowhere near data/sample_corpus/manifest.yaml, because a
+# label reachable from the ingestion path is a label the system can accidentally read.
+# Nothing in `app/` loads this file; only tests and the evaluation harness do.
+#
+# Scored at as_of 2026-01-01 against the replay extractor, so a diff here means the
+# deterministic layer changed - not that extraction drifted.
+
+as_of: 2026-01-01
+registry_version: registry-1
+coupling_index_version: coupling-1
+authority_model_version: authority-1
+
+# -- Class A findings that MUST be discovered, with no LLM call ------------
+#
+# Each names the rule that must produce it and the artifact that must be reported as
+# affected. `affected` is the document a reviewer has to go and fix.
+must_find:
+  - id: same_scope_contradiction_refund
+    rule: same_scope_contradiction
+    key: refund.approval_threshold
+    scope: global
+    participants:
+      - policy/refund-approval-policy.md
+      - standard/payments-operations-standard.md
+    why: >
+      Two declarers, equal scope, overlapping validity, divergent values (10,000 vs 7,500
+      USD). The canonical seeded contradiction.
+
+  - id: unauthorized_override_retention_eu
+    rule: unauthorized_override
+    key: retention.window
+    scope: "region:eu"
+    affected: wiki/emea-support-notes.md
+    counterpart: policy/data-retention-policy.md
+    why: >
+      wiki < policy, narrower scope, overlapping validity. A governance defect, not a
+      contradiction between peers and not a legitimate specialization.
+
+  - id: stale_consumer_retention_analytics
+    rule: stale_consumer
+    key: retention.window
+    scope: global
+    affected: dashboard/retention-analytics-definition.md
+    counterpart: policy/data-retention-policy.md
+    why: >
+      The metric definition consumes 365d where the governing policy declares 90d. The
+      declares/consumes staleness pair, standing rather than change-triggered.
+
+  - id: same_scope_contradiction_sla
+    rule: same_scope_contradiction
+    key: sla.p1_response_time
+    scope: global
+    participants:
+      - sop/password-reset-runbook.md
+      - sop/incident-response-runbook.md
+    why: >
+      Two peers at the same authority class declaring 15 and 30 minutes. Also the source of
+      the seeded authority ambiguity below.
+
+# -- What MUST NOT be reported --------------------------------------------
+must_not_find:
+  - id: legitimate_override_retention_eu
+    key: retention.window
+    narrower: policy/eu-data-protection-policy.md
+    broader: policy/data-retention-policy.md
+    expected: legitimate_override
+    forbidden_rules: [unauthorized_override]
+    why: >
+      regulatory >= policy at a narrower scope. Emitted as an override record, never as a
+      finding. Reporting correct behaviour as a defect is the fastest way to lose trust.
+
+      Scoped to the override rule deliberately. The EU policy *is* legitimately reported
+      elsewhere - it contradicts the EMEA wiki page at region:eu, which is a genuine
+      same-scope conflict between two declarers. "Never flagged as an unauthorized
+      override" is the claim; "never mentioned anywhere" would be the wrong one.
+
+  - id: describes_binding_is_silent
+    key: refund.approval_threshold
+    holder: ticket/INC-4471-refund-backlog.md
+    expected: no_finding
+    forbidden_rules: [same_scope_contradiction, unauthorized_override, stale_consumer]
+    why: >
+      role is `describes`. Historical narration of a threshold does not become wrong, and
+      never invalidates anything, so no rule may report it.
+
+  - id: consumer_agreeing_with_authority
+    key: refund.approval_threshold
+    holder: training/refund-handling-deck.md
+    expected: no_finding
+    forbidden_rules: [stale_consumer]
+    why: >
+      The deck consumes 10,000, which is what the governing policy declares. A
+      lower-authority standard disagreeing does not make the deck stale - that would be a
+      false positive produced by comparing against a document that does not govern.
+
+# -- Authority resolution -------------------------------------------------
+authority:
+  resolved:
+    - key: refund.approval_threshold
+      scope: global
+      value: 10000USD
+      holder: policy/refund-approval-policy.md
+      why: policy outranks standard and wiki, and is the unique top authority
+    - key: retention.window
+      scope: global
+      value: 90d
+      holder: policy/data-retention-policy.md
+    - key: retention.window
+      scope: "region:eu"
+      value: 30d
+      holder: policy/eu-data-protection-policy.md
+      flagged_narrowings: 1
+      why: >
+        The regulatory EU value governs; the EMEA wiki narrowing is flagged and skipped,
+        never applied and never discarded.
+
+  ambiguous:
+    - key: sla.p1_response_time
+      scope: global
+      reason: equal_authority_divergence
+      candidates:
+        - sop/password-reset-runbook.md
+        - sop/incident-response-runbook.md
+      why: >
+        Two sop_runbook declarers, overlapping validity, divergent values. The incident
+        runbook is NEWER (2025-09-01 vs 2025-02-01), so an implementation with a
+        newest-wins fallback would return 30min here instead of reporting ambiguity. This
+        row is the corpus-level guard against that fallback.
+
+# -- Knowledge-decay report -----------------------------------------------
+decay:
+  known_inconsistency_min: 4
+  known_ambiguity_min: 1
+  missing_knowledge_min: 5
+  must_include_categories:
+    - stale_consumer
+    - unauthorized_override
+    - contradictory_declarations
+    - ambiguous_authority
+    - registry_gap
+    - single_holder
+    - unwritten_rule
+
+# -- Delta propagation ----------------------------------------------------
+delta_cases:
+  - id: retention_global_180d
+    key: retention.window
+    scope: global
+    old_value: 90d
+    new_value: 180d
+    invalidated:
+      - dashboard/retention-analytics-definition.md   # consumes 365d
+      - wiki/emea-support-notes.md                    # unauthorized EU narrowing
+      - wiki/vendor-integration-notes.md              # declares 3650d @global
+    needs_confirmation:
+      - policy/eu-data-protection-policy.md           # legitimate EU override
+    not_affected:
+      - policy/data-retention-policy.md               # the declaration being edited
+    pre_existing_overrides: 1
+    why: >
+      Checkpoint E3, end to end. The legitimate override asks for confirmation; the
+      unauthorized one is invalidated AND separately reported as a pre-existing defect the
+      change did not cause.
+
+# -- Metrics --------------------------------------------------------------
+metrics:
+  class_a_recall_min: 1.0
+  false_class_a_max: 0.0
+  unauthorized_override_precision_min: 1.0
+  contradiction_precision_min: 1.0
+  stale_consumer_recall_min: 1.0
+  llm_calls_in_coupling_path: 0

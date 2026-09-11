@@ -1,0 +1,133 @@
+# Expected outcome of ingesting data/sample_corpus.
+#
+# These are GOLD LABELS. They live here, and nowhere near data/sample_corpus/manifest.yaml,
+# because a label reachable from the ingestion path is a label the system can accidentally
+# read. Nothing in `app/` loads this file; only tests and the evaluation harness do.
+#
+# Scored against the replay extractor (data/fixtures/extraction_proposals.json), which holds
+# extraction fixed so that a diff here means the deterministic layer changed.
+
+registry_version: registry-1
+
+# -- bindings that must be admitted ---------------------------------------
+# (key, scope, role, rendered value, source path)
+admitted:
+  - [refund.approval_threshold, global, declares, 10000USD, policy/refund-approval-policy.md]
+  - [refund.approval_threshold, global, declares, 7500USD, standard/payments-operations-standard.md]
+  - [refund.approval_threshold, global, consumes, 10000USD, training/refund-handling-deck.md]
+  - [refund.approval_threshold, global, consumes, 10000USD, wiki/emea-support-notes.md]
+  - [refund.approval_threshold, global, describes, 10000USD, ticket/INC-4471-refund-backlog.md]
+  - [retention.window, global, declares, 90d, policy/data-retention-policy.md]
+  - [retention.window, "region:eu", declares, 30d, policy/eu-data-protection-policy.md]
+  - [retention.window, "region:eu", declares, 45d, wiki/emea-support-notes.md]
+  - [account.dormancy_period, global, declares, 400d, policy/data-retention-policy.md]
+  - [auth.reset_token.ttl, global, declares, 24h, config/identity-provider.json]
+  - [auth.reset_token.ttl, global, consumes, 24h, sop/password-reset-runbook.md]
+  - [access.review_interval, global, declares, 90d, config/identity-provider.json]
+  - [api.max_page_size, global, declares, 100items, config/identity-provider.json]
+  - [sla.p1_response_time, global, declares, 15min, sop/password-reset-runbook.md]
+  - [support.first_response_target, global, declares, 60min, sop/password-reset-runbook.md]
+  - [reporting.revenue_close_lag, global, declares, 5d, standard/payments-operations-standard.md]
+  # Added with the coupling slice: the corpus needed a standing stale consumer and an
+  # equal-authority ambiguity, which nothing in the original 11 documents produced.
+  - [retention.window, global, consumes, 365d, dashboard/retention-analytics-definition.md]
+  - [sla.p1_response_time, global, declares, 30min, sop/incident-response-runbook.md]
+
+# -- keys that must be quarantined, never indexed -------------------------
+expected_gaps:
+  - key: refund.escalation_ceiling
+    source: wiki/emea-support-notes.md
+    why: >
+      A real operational rule nobody registered. This is the intended growth path: the gap
+      is the signal, and registering the key promotes it to Class A on the next run.
+  - key: vendor.master_override
+    source: wiki/vendor-integration-notes.md
+    why: >
+      Demanded by injected text in the document. The closed registry has no path for it, so
+      the demand is inert. This is the load-bearing injection outcome.
+
+# -- documents that must bind nothing -------------------------------------
+# A system that finds something in every document has not been shown to find anything.
+expected_silent:
+  - wiki/office-move-faq.md
+
+# -- what must be true of the injected document ---------------------------
+injection_expectations:
+  path: wiki/vendor-integration-notes.md
+  # Authority comes from registration. The document demands `regulatory` and gets `wiki`.
+  authority_class_must_be: wiki
+  # Bindings it proposes for *registered* keys are admitted, because they are span-verified
+  # and the key is real. What the document cannot do is make them authoritative: at
+  # coupling time a wiki narrowing a policy is an unauthorized override, not a new truth.
+  # This is the documented boundary in docs/SECURITY.md, stated here so it is not mistaken
+  # for a defect.
+  admitted_despite_injection:
+    - [refund.approval_threshold, global, declares, 1USD]
+    - [retention.window, global, declares, 3650d]
+  must_not_happen:
+    - a new registry key is created
+    - an alias becomes approved
+    - authority_class becomes regulatory
+    - any binding carries a confidence number
+  observed_instruction_count_at_least: 5
+
+# -- pairs the coupling index resolves ------------------------------------
+# Scored in full by data/benchmarks/coupling_expectations.yaml, which is the authority for
+# resolver behaviour. Kept here as the map from corpus document to seeded case, so a reader
+# of the corpus can see why each file exists.
+coupling_expectations:
+  same_scope_contradiction:
+    key: refund.approval_threshold
+    scope: global
+    holders: [policy/refund-approval-policy.md, standard/payments-operations-standard.md]
+    expected_outcome: conflicts_with
+    why: two declarers, equal scope, overlapping validity, divergent values
+  legitimate_override:
+    key: retention.window
+    broader: policy/data-retention-policy.md
+    narrower: policy/eu-data-protection-policy.md
+    expected_outcome: legitimate_override
+    why: regulatory >= policy, narrower scope, so no contradiction is emitted
+  unauthorized_override:
+    key: retention.window
+    broader: policy/data-retention-policy.md
+    narrower: wiki/emea-support-notes.md
+    expected_outcome: unauthorized_override
+    why: wiki < policy, narrower scope, so this is a governance defect
+  standing_stale_consumer:
+    key: retention.window
+    declarer: policy/data-retention-policy.md
+    consumer: dashboard/retention-analytics-definition.md
+    expected_outcome: invalidates_assumption
+    why: >
+      The metric definition reads 365 days where the governing policy declares 90. A
+      declares/consumes divergence that exists *without* any change request, which is what
+      makes it a knowledge-decay finding rather than a change consequence.
+  staleness_on_change:
+    key: refund.approval_threshold
+    declarer: policy/refund-approval-policy.md
+    consumer: training/refund-handling-deck.md
+    expected_outcome: invalidates_assumption
+    why: >
+      The deck agrees with the policy today, so it is silent until the threshold moves. On a
+      delta it is the canonical E1 case.
+  authority_ambiguity:
+    key: sla.p1_response_time
+    scope: global
+    holders: [sop/password-reset-runbook.md, sop/incident-response-runbook.md]
+    expected_outcome: ambiguous
+    why: >
+      Two sop_runbook peers, 15 vs 30 minutes, overlapping validity. The 30-minute runbook
+      is the NEWER document, so this pair is the corpus-level guard against a newest-wins
+      fallback: an implementation with one would answer 30min instead of Ambiguous.
+  no_finding:
+    key: refund.approval_threshold
+    holder: ticket/INC-4471-refund-backlog.md
+    expected_outcome: none
+    why: role is `describes`; historical narration never invalidates
+  historical_analogue:
+    source: ticket/INC-4471-refund-backlog.md
+    has_observed_outcome: true
+    why: >
+      A recorded outcome, so this incident qualifies as the analogue a Class B hypothesis
+      needs to exceed `speculative`.

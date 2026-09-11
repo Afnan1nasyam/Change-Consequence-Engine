@@ -1,0 +1,28 @@
+{
+  "service": "identity-provider",
+  "environment": "production",
+  "auth": {
+    "reset_token": {
+      "ttl_hours": 24,
+      "single_use": true,
+      "delivery": "email"
+    },
+    "mfa": {
+      "required_for_staff": true,
+      "grace_period_days": 7
+    },
+    "session": {
+      "idle_timeout_minutes": 30,
+      "absolute_timeout_hours": 12
+    }
+  },
+  "access_review": {
+    "privileged_recertification_days": 90,
+    "owner": "security-operations"
+  },
+  "api": {
+    "max_page_size": 100,
+    "default_page_size": 25
+  },
+  "notes": "Values here are enforced by the service at runtime. Changing a value requires a change request; the service reads this file at boot."
+}
