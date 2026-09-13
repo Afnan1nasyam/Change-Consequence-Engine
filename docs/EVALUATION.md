@@ -619,9 +619,10 @@ difference of denominators and would mean nothing.
 **no semantic knowledge at all**. Two texts are close only if they share literal tokens. So
 these figures measure the vector *machinery* — the index, the filters, the ordering, the
 provenance — plus a term-overlap signal expressed as cosine. **They are not a measurement of
-semantic retrieval.** `ReplayEmbedder` is the seam that would make them one, and no
-provider-recorded fixture is committed yet, because recording one needs credentials this
-environment does not have.
+semantic retrieval.** A real Gemini recording has now been completed separately; its results
+are described below, but the benchmark scorer still identifies the vector run as
+`hashing-1:d=256`, so those benchmark numbers are not presented as Gemini semantic-retrieval
+results.
 
 #### Results
 
@@ -713,18 +714,40 @@ control figures here must not be read as evidence about how a real embedder beha
 
 #### What the vector benchmark deliberately does not claim
 
-- **It is not a semantic measurement.** See the embedder note above. The honest semantic
-  number needs one recorded provider run, and the machinery for that is built and untested
-  against real vectors.
+- **It is not a semantic measurement.** This subsection is the offline `HashingEmbedder`
+  baseline. A real Gemini recording has since been completed, but the current scorer still
+  labels the vector benchmark as `hashing-1:d=256`, so the benchmark figures below are not
+  presented as a measured Gemini semantic-retrieval result.
 - **No hybrid fusion, no reranking, no query expansion.** The two strategies are scored
-  separately and never merged. Each is pinned to its own scorer version so one cannot be
-  reprinted under the other's heading.
+  separately and never merged in this baseline. Each is pinned to its own scorer version.
 - **Nothing was tuned on either side.** No similarity floor, no dimension search, no
   re-tuning of `k1`/`b`, no change to the tokenizer or the labels.
 - **The index is rebuilt and re-embedded per query.** Honest for 21 spans and badly wrong
   for a real corpus, where embedding the whole tenant per query would dominate cost and
   latency. It is a correctness-first implementation, recorded as the largest open issue in
   the slice.
+
+#### Real Gemini embedding recording
+
+A real Gemini embedding run was completed after the offline vector baseline. The recording
+script sent the same 51 distinct texts used by the retrieval benchmark: 21 admitted evidence
+spans and 35 benchmark queries. Gemini returned all 51 vectors in 4.6 seconds.
+
+The run used `gemini` with model `gemini-embedding-001` at 768 dimensions. The generated fixture
+records the provider, model, dimensions, adapter version, recording date and text digests; the
+API key is not written to the fixture.
+
+The recording proves that the provider configuration, credential, request path and replay
+fixture path all work. It does **not**, by itself, justify calling the existing vector benchmark
+a Gemini semantic-retrieval benchmark. The subsequent benchmark output still reports the scorer
+as `vector-cosine-1:hashing-1:d=256`, the same scorer used for the offline vector baseline.
+Because of that mismatch, the benchmark recall figures remain attributed to the frozen
+HashingEmbedder run rather than being relabelled as Gemini results.
+
+The practical v1 decision is therefore unchanged: keep BM25 as the default retrieval strategy.
+Gemini embeddings remain an available provider and a validated recording path, but a clean
+provider-specific semantic benchmark should be treated as a separate follow-up once the scorer
+and replay path expose the real provider identity consistently.
 
 ### Hybrid retrieval, as measured
 
@@ -801,12 +824,12 @@ Three further observations:
 
 #### What the hybrid benchmark deliberately does not claim
 
-- **This is not a verdict on hybrid retrieval.** It is a verdict on fusing *these two*
-  inputs. The vector side has no semantics; the honest test needs a real embedder, and the
-  prediction to check then is that vector-only volume falls and vector-only *hits* appear.
+- **This is a verdict on the frozen lexical + HashingEmbedder combination, not on a semantic
+  hybrid.** A real Gemini embedding recording has been completed, but the hybrid benchmark
+  below was run with the existing `HashingEmbedder` vector side.
 - **`k = 60` was not tuned.** A larger `k` flattens both lists and would reduce the damage
   the weak input does at the top; searching it now would be fitting a fusion parameter to
-  compensate for an embedder nobody has measured.
+  compensate for the current vector baseline.
 - **No weighting was tried.** Down-weighting the vector input would improve these numbers
   and would be exactly the wrong lesson to draw from one measurement over 62 labels.
 - **Precision is still not scored.** The contribution split and the negative controls are
